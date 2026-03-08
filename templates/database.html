@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Database{% endblock %}
+{% block page_title %}Face Database{% endblock %}
+{% block extra_head %}
+<style>
+.db-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}
+.person-card{background:#111827;border-radius:12px;border:1px solid #1f2937;overflow:hidden;text-align:center}
+.person-card img{width:100%;aspect-ratio:1;object-fit:cover;background:#1f2937;display:block}
+.person-card-body{padding:12px}
+.person-card-body .name{font-weight:600;color:#e0e0e0;font-size:0.9rem;margin-bottom:4px}
+.person-card-body .date{color:#6b7280;font-size:0.75rem;margin-bottom:10px}
+.btn-del{background:#7f1d1d;color:#fca5a5;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;width:100%}
+.btn-del:hover{background:#991b1b}
+.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2 style="color:#e0e0e0">Registered Persons</h2>
+  <a href="/register" style="background:#00d084;color:#000;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:700;font-size:0.85rem">+ Register</a>
+</div>
+{% if persons %}
+<div class="db-grid">
+{% for p in persons %}
+<div class="person-card">
+  <img src="/{{p.image}}" onerror="this.src=''">
+  <div class="person-card-body">
+    <div class="name">{{p.name}}</div>
+    <div class="date">{{p.added_at[:10]}}</div>
+    <form method="POST" action="/database/delete/{{p.id}}" onsubmit="return confirm('Remove {{p.name}}?')">
+      <button class="btn-del" type="submit">Remove</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div style="text-align:center;padding:60px;color:#6b7280">No persons registered yet. <a href="/register" style="color:#00d084">Register one</a>.</div>
+{% endif %}
+{% endblock %}

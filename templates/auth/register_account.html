@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IronEye — Setup</title>
+<style>
+
+:root {
+  --bg: #0a0a0f;
+  --bg2: #0f1117;
+  --bg3: #161b27;
+  --bg4: #1e2535;
+  --border: #252d3d;
+  --accent: #00d084;
+  --accent2: #00a86b;
+  --danger: #ef4444;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --text3: #4b5563;
+  --radius: 12px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;background-image:radial-gradient(ellipse at 20% 50%,rgba(0,208,132,0.04) 0%,transparent 60%)}
+.wrap{width:100%;max-width:440px;padding:20px}
+.box{background:var(--bg2);border-radius:16px;padding:40px;border:1px solid var(--accent);box-shadow:0 0 40px rgba(0,208,132,0.08)}
+.logo{text-align:center;margin-bottom:28px}
+.logo-icon{width:56px;height:56px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:1.6rem;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,208,132,0.25)}
+.logo h1{color:var(--accent);font-size:1.8rem;letter-spacing:3px;font-weight:800}
+.logo p{color:var(--text2);font-size:0.82rem;margin-top:4px}
+.setup-badge{background:rgba(0,208,132,0.08);color:var(--accent);padding:10px 16px;border-radius:var(--radius);font-size:0.82rem;margin-bottom:24px;text-align:center;border:1px solid rgba(0,208,132,0.2)}
+.form-group{margin-bottom:18px}
+.form-group label{display:block;color:var(--text2);font-size:0.75rem;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.form-group input{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:12px 16px;border-radius:var(--radius);font-size:0.9rem;outline:none;transition:all 0.2s}
+.form-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,208,132,0.1);background:var(--bg4)}
+.btn{width:100%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;border:none;padding:13px;border-radius:var(--radius);font-size:0.95rem;font-weight:700;cursor:pointer;margin-top:8px;transition:all 0.2s}
+.btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,208,132,0.3)}
+.flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:20px;font-size:0.85rem;background:rgba(239,68,68,0.12);color:#fca5a5;border:1px solid rgba(239,68,68,0.25)}
+.back-link{text-align:center;margin-top:16px;color:var(--text3);font-size:0.8rem}
+.back-link a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="box">
+  <div class="logo">
+    <div class="logo-icon">🦾</div>
+    <h1>IRONEYE</h1>
+    <p>First-Time Setup</p>
+  </div>
+  <div class="setup-badge">🔐 Create your admin account to get started</div>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}{% for cat,msg in messages %}<div class="flash">{{msg}}</div>{% endfor %}{% endif %}
+  {% endwith %}
+  <form method="POST">
+    <div class="form-group"><label>Username</label><input type="text" name="username" autofocus required placeholder="Choose a username"></div>
+    <div class="form-group"><label>Password</label><input type="password" name="password" required placeholder="Min 6 characters"></div>
+    <div class="form-group"><label>Confirm Password</label><input type="password" name="password2" required placeholder="Repeat password"></div>
+    <button class="btn" type="submit">Create Admin Account</button>
+  </form>
+  <div class="back-link">Already have an account? <a href="/login">Login</a></div>
+</div>
+</div>
+</body></html>

@@ -1,0 +1,10 @@
+flask>=3.0.0
+opencv-python>=4.10.0
+numpy>=2.0.0
+Pillow>=10.4.0
+scikit-learn>=1.5.0
+deepface>=0.0.93
+python-dotenv>=1.0.1
+tf-keras>=2.16.0
+requests>=2.31.0
+tqdm>=4.66.0

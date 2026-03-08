@@ -1,0 +1,233 @@
+"""
+face_engine.py
+──────────────
+Core ML face recognition engine.
+Uses the `face_recognition` library (dlib + ResNet) to generate 128-dim
+face encodings, stores them in SQLite, and does cosine-similarity matching.
+
+No TensorFlow / DeepFace required — works on Python 3.13 + macOS.
+"""
+
+import os
+import json
+import sqlite3
+import numpy as np
+from pathlib import Path
+from datetime import datetime
+import face_recognition
+import cv2
+from sklearn.metrics.pairwise import cosine_similarity
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+DB_PATH       = "database/faces.db"
+KNOWN_DIR     = "known_faces"
+ALERTS_DIR    = "alerts"
+THRESHOLD     = 0.6         # euclidean distance threshold (lower = stricter)
+UNKNOWN_LABEL = "⚠️  UNKNOWN"
+
+os.makedirs(KNOWN_DIR,   exist_ok=True)
+os.makedirs(ALERTS_DIR,  exist_ok=True)
+os.makedirs("database",  exist_ok=True)
+
+
+# ─── Database Setup ───────────────────────────────────────────────────────────
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS persons (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            image     TEXT NOT NULL,
+            embedding TEXT NOT NULL,
+            added_at  TEXT NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot    TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            email_sent  INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+# ─── Embedding Utilities ──────────────────────────────────────────────────────
+def get_embedding(image_path: str) -> np.ndarray | None:
+    """
+    Extract a 128-dim face encoding from an image file.
+    Returns None if no face is detected.
+    """
+    try:
+        img = face_recognition.load_image_file(image_path)
+        encodings = face_recognition.face_encodings(img)
+        if not encodings:
+            print(f"[FaceEngine] No face found in: {image_path}")
+            return None
+        return np.array(encodings[0], dtype=np.float32)
+    except Exception as e:
+        print(f"[FaceEngine] Embedding error: {e}")
+        return None
+
+
+def get_embedding_from_array(rgb_array: np.ndarray) -> np.ndarray | None:
+    """Extract embedding directly from a numpy RGB array (for live frames)."""
+    try:
+        encodings = face_recognition.face_encodings(rgb_array)
+        if not encodings:
+            return None
+        return np.array(encodings[0], dtype=np.float32)
+    except Exception as e:
+        print(f"[FaceEngine] Embedding error: {e}")
+        return None
+
+
+def emb_to_str(emb: np.ndarray) -> str:
+    return json.dumps(emb.tolist())
+
+
+def str_to_emb(s: str) -> np.ndarray:
+    return np.array(json.loads(s), dtype=np.float32)
+
+
+# ─── Person Registration ──────────────────────────────────────────────────────
+def register_person(name: str, image_path: str) -> dict:
+    emb = get_embedding(image_path)
+    if emb is None:
+        return {"success": False, "message": "No face detected in the uploaded image. Please use a clear, front-facing photo."}
+
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute(
+        "INSERT INTO persons (name, image, embedding, added_at) VALUES (?, ?, ?, ?)",
+        (name, image_path, emb_to_str(emb), datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    print(f"[FaceEngine] ✅ Registered: {name}")
+    return {"success": True, "message": f"{name} registered successfully."}
+
+
+def delete_person(person_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("SELECT image FROM persons WHERE id = ?", (person_id,))
+    row = c.fetchone()
+    if row:
+        try: os.remove(row[0])
+        except: pass
+        c.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+        conn.commit()
+    conn.close()
+    return row is not None
+
+
+def get_all_persons() -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("SELECT id, name, image, added_at FROM persons ORDER BY added_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "name": r[1], "image": r[2], "added_at": r[3]} for r in rows]
+
+
+# ─── Face Recognition ─────────────────────────────────────────────────────────
+def load_all_embeddings() -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("SELECT id, name, embedding FROM persons")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "name": r[1], "embedding": str_to_emb(r[2])} for r in rows]
+
+
+def identify_embedding(query_emb: np.ndarray, db_embeddings: list[dict]) -> dict:
+    """Compare a query embedding against all registered embeddings."""
+    if query_emb is None or not db_embeddings:
+        return {"name": UNKNOWN_LABEL, "confidence": 0.0, "is_known": False}
+
+    known_encodings = [e["embedding"] for e in db_embeddings]
+    distances = face_recognition.face_distance(known_encodings, query_emb)
+    best_idx  = int(np.argmin(distances))
+    best_dist = float(distances[best_idx])
+    confidence = round((1 - best_dist) * 100, 1)
+
+    if best_dist <= THRESHOLD:
+        return {
+            "name":       db_embeddings[best_idx]["name"],
+            "confidence": confidence,
+            "is_known":   True
+        }
+    return {"name": UNKNOWN_LABEL, "confidence": confidence, "is_known": False}
+
+
+# ─── Real-time Frame Processing ───────────────────────────────────────────────
+def process_frame(frame_bgr: np.ndarray, db_embeddings: list[dict]) -> tuple[np.ndarray, list[dict]]:
+    """
+    Detect and identify all faces in a BGR OpenCV frame.
+    Returns (annotated_frame, list_of_detections).
+    """
+    # face_recognition expects RGB
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+    # Downscale for faster detection, then scale coords back
+    small_rgb = cv2.resize(rgb, (0, 0), fx=0.5, fy=0.5)
+
+    locations  = face_recognition.face_locations(small_rgb, model="hog")
+    encodings  = face_recognition.face_encodings(small_rgb, locations)
+
+    detections = []
+
+    for (top, right, bottom, left), enc in zip(locations, encodings):
+        # Scale back up
+        top, right, bottom, left = top*2, right*2, bottom*2, left*2
+
+        query_emb = np.array(enc, dtype=np.float32)
+        result    = identify_embedding(query_emb, db_embeddings)
+
+        # ── Draw ──────────────────────────────────────────────────────────────
+        color = (0, 200, 80) if result["is_known"] else (0, 50, 220)
+        label = f"{result['name']}  {result['confidence']}%"
+
+        cv2.rectangle(frame_bgr, (left, top), (right, bottom), color, 2)
+
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        cv2.rectangle(frame_bgr, (left, top - th - 12), (left + tw + 8, top), color, -1)
+        cv2.putText(frame_bgr, label, (left + 4, top - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+
+        detections.append({**result, "bbox": (left, top, right - left, bottom - top)})
+
+    return frame_bgr, detections
+
+
+# ─── Alert Logging ────────────────────────────────────────────────────────────
+def save_alert(frame: np.ndarray) -> str:
+    ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"alerts/unknown_{ts}.jpg"
+    cv2.imwrite(filename, frame)
+
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("INSERT INTO alerts (snapshot, detected_at) VALUES (?, ?)",
+              (filename, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    print(f"[FaceEngine] ⚠️  Alert saved: {filename}")
+    return filename
+
+
+def get_all_alerts(limit: int = 50) -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    c    = conn.cursor()
+    c.execute("SELECT id, snapshot, detected_at, email_sent FROM alerts ORDER BY detected_at DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "snapshot": r[1], "detected_at": r[2], "email_sent": bool(r[3])} for r in rows]
+
+
+# ─── Init ─────────────────────────────────────────────────────────────────────
+init_db()

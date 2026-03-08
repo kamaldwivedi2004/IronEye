@@ -1,0 +1,180 @@
+"""
+camera.py
+─────────
+Real-time webcam face detection + recognition loop.
+Run standalone:   python camera.py
+Or import stream_frames() into the Flask app for browser streaming.
+"""
+
+import cv2
+import time
+import threading
+from face_engine  import process_frame, load_all_embeddings, save_alert
+from alert_system import trigger_alert
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+CAMERA_INDEX       = 0      # 0 = built-in webcam, 1 = external
+FRAME_SKIP         = 3      # run recognition every N frames (performance)
+RELOAD_DB_INTERVAL = 10     # reload embeddings from DB every N seconds
+
+# ─── Shared state for Flask streaming ─────────────────────────────────────────
+_output_frame  = None
+_frame_lock    = threading.Lock()
+_is_running    = False
+
+
+def _recognition_loop():
+    """Main camera + recognition loop (runs in a thread)."""
+    global _output_frame, _is_running
+
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    if not cap.isOpened():
+        print("[Camera] ❌ Could not open webcam.")
+        _is_running = False
+        return
+
+    print("[Camera] ✅ Webcam started.")
+
+    db_embeddings   = load_all_embeddings()
+    last_db_reload  = time.time()
+    frame_count     = 0
+    last_unknown_ts = 0
+    last_known_spoken = {}  # name -> timestamp
+
+    while _is_running:
+        ret, frame = cap.read()
+        if not ret:
+            print("[Camera] ⚠️  Frame grab failed.")
+            time.sleep(0.1)
+            continue
+
+        frame_count += 1
+
+        # Periodically reload the face database (picks up new registrations)
+        if time.time() - last_db_reload > RELOAD_DB_INTERVAL:
+            db_embeddings  = load_all_embeddings()
+            last_db_reload = time.time()
+            print(f"[Camera] 🔄 DB reloaded — {len(db_embeddings)} person(s).")
+
+        # Run recognition every FRAME_SKIP frames for performance
+        if frame_count % FRAME_SKIP == 0:
+            annotated, detections = process_frame(frame.copy(), db_embeddings)
+
+            # Speak welcome for newly seen known faces (cooldown 60s per person)
+            import time as _time
+            for d in detections:
+                if d.get("is_known") and d.get("name"):
+                    nm = d["name"]
+                    if _time.time() - last_known_spoken.get(nm, 0) > 60:
+                        first_name = nm.split("_")[0]
+                        speak(f"Welcome, {first_name}")
+                        last_known_spoken[nm] = _time.time()
+
+            # Check for unknowns
+            has_unknown = any(not d["is_known"] for d in detections)
+            if has_unknown and (time.time() - last_unknown_ts > 30):
+                snapshot = save_alert(annotated)
+                alerted  = trigger_alert(snapshot, send_email=True)
+                if alerted:
+                    import subprocess; speak('Unknown person detected! Alert triggered.')
+                subprocess.Popen(['afplay', '/Users/kamaldwivedi/Downloads/fahhhhh.mp3'])
+                if alerted:
+                    last_unknown_ts = time.time()
+
+            # Add FPS overlay
+            cv2.putText(annotated,
+                        f"Persons in DB: {len(db_embeddings)}",
+                        (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+            with _frame_lock:
+                _output_frame = annotated.copy()
+        else:
+            with _frame_lock:
+                _output_frame = frame.copy()
+
+    cap.release()
+    print("[Camera] Camera released.")
+
+
+def start_camera():
+    global _is_running
+    if _is_running:
+        return
+    _is_running = True
+    t = threading.Thread(target=_recognition_loop, daemon=True)
+    t.start()
+
+
+def stop_camera():
+    global _is_running
+    _is_running = False
+
+
+def stream_frames():
+    """
+    Generator for Flask's Response streaming (MJPEG).
+    Yields JPEG bytes of annotated frames.
+    """
+    global _output_frame
+    while True:
+        with _frame_lock:
+            if _output_frame is None:
+                time.sleep(0.05)
+                continue
+            ret, buffer = cv2.imencode(".jpg", _output_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ret:
+                continue
+            frame_bytes = buffer.tobytes()
+
+        yield (b"--frame\r\n"
+               b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
+        time.sleep(0.04)   # ~25 fps cap
+
+
+# ─── Standalone run ───────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("Press Q to quit.")
+    db = load_all_embeddings()
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    fc = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        fc += 1
+        if fc % FRAME_SKIP == 0:
+            frame, detections = process_frame(frame, db)
+            for d in detections:
+                if not d["is_known"]:
+                    snap = save_alert(frame)
+                    trigger_alert(snap)
+
+        cv2.imshow("Smart Face Recognition — Q to quit", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+import subprocess
+
+import threading
+
+def speak(text):
+    """Speak text using macOS say command (non-blocking)."""
+    def _speak():
+        import subprocess
+        subprocess.Popen(['say', '-v', 'Samantha', text])
+    threading.Thread(target=_speak, daemon=True).start()
+
+
+def play_alert():
+    speak("Unknown person detected! Alert triggered.")
+    import subprocess
+    subprocess.Popen(['afplay', '/Users/kamaldwivedi/Downloads/fahhhhh.mp3'])

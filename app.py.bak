@@ -1,0 +1,143 @@
+"""
+app.py
+──────
+Flask web UI for the Smart Face Recognition System.
+Provides:
+  /              → Dashboard (live feed + stats)
+  /register      → Upload + register a new person
+  /database      → View / delete registered persons
+  /alerts        → View unknown-face alert log
+  /video_feed    → MJPEG stream for the live feed
+"""
+
+import os
+import uuid
+from flask import (Flask, render_template, request, redirect,
+                   url_for, flash, Response, jsonify)
+from werkzeug.utils import secure_filename
+from face_engine   import (register_person, delete_person,
+                            get_all_persons, get_all_alerts, KNOWN_DIR)
+from camera        import start_camera, stop_camera, stream_frames
+from alert_system  import create_env_template
+
+# ─── App Setup ────────────────────────────────────────────────────────────────
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+ALLOWED_EXT = {"png", "jpg", "jpeg", "webp"}
+create_env_template()
+
+def allowed(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+@app.route("/")
+def dashboard():
+    persons = get_all_persons()
+    alerts  = get_all_alerts(limit=5)
+    return render_template("dashboard.html", persons=persons, alerts=alerts,
+                           total_persons=len(persons), total_alerts=len(get_all_alerts(1000)))
+
+
+@app.route("/video_feed")
+def video_feed():
+    """MJPEG stream endpoint — embedded in dashboard via <img> tag."""
+    return Response(stream_frames(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/camera/start", methods=["POST"])
+def camera_start():
+    start_camera()
+    flash("Camera started.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/camera/stop", methods=["POST"])
+def camera_stop():
+    stop_camera()
+    flash("Camera stopped.", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        file = request.files.get("photo")
+
+        if not name:
+            flash("Name is required.", "error")
+            return redirect(url_for("register"))
+
+        if not file or not allowed(file.filename):
+            flash("Please upload a valid image (jpg / png / webp).", "error")
+            return redirect(url_for("register"))
+
+        # Save with unique filename
+        ext      = file.filename.rsplit(".", 1)[1].lower()
+        filename = secure_filename(f"{name.replace(' ','_')}_{uuid.uuid4().hex[:6]}.{ext}")
+        save_path = os.path.join(KNOWN_DIR, filename)
+        file.save(save_path)
+
+        result = register_person(name, save_path)
+
+        if result["success"]:
+            flash(f"✅ {result['message']}", "success")
+            return redirect(url_for("database_view"))
+        else:
+            os.remove(save_path)
+            flash(f"❌ {result['message']}", "error")
+            return redirect(url_for("register"))
+
+    return render_template("register.html")
+
+
+@app.route("/database")
+def database_view():
+    persons = get_all_persons()
+    return render_template("database.html", persons=persons)
+
+
+@app.route("/database/delete/<int:person_id>", methods=["POST"])
+def delete_person_route(person_id):
+    success = delete_person(person_id)
+    if success:
+        flash("Person removed from database.", "info")
+    else:
+        flash("Person not found.", "error")
+    return redirect(url_for("database_view"))
+
+
+@app.route("/alerts")
+def alerts_view():
+    alerts = get_all_alerts(limit=100)
+    return render_template("alerts.html", alerts=alerts)
+
+
+@app.route("/api/stats")
+def api_stats():
+    """JSON endpoint for live dashboard stats."""
+    return jsonify({
+        "total_persons": len(get_all_persons()),
+        "total_alerts":  len(get_all_alerts(1000))
+    })
+
+
+# ─── Run ──────────────────────────────────────────────────────────────────────
+
+from flask import send_from_directory
+
+@app.route('/alerts/<path:filename>')
+def serve_alert(filename):
+    return send_from_directory('alerts', filename)
+
+@app.route('/known_faces/<path:filename>')
+def serve_known_face(filename):
+    return send_from_directory('known_faces', filename)
+
+if __name__ == "__main__":
+    print("\n🚀 Smart Face Recognition System")
+    print("   Open http://localhost:5000 in your browser\n")
+    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)

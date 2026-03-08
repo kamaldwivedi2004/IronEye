@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block page_title %}Alert Log{% endblock %}
+{% block extra_head %}
+<style>
+.alerts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.alert-card{background:#111827;border-radius:12px;border:1px solid #1f2937;overflow:hidden}
+.alert-card img{width:100%;aspect-ratio:16/9;object-fit:cover;background:#000;display:block}
+.alert-card-body{padding:12px}
+.alert-card-body .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;background:#7f1d1d;color:#fca5a5;margin-bottom:8px}
+.alert-card-body .badge.sent{background:#064e3b;color:#6ee7b7}
+.alert-card-body .time{color:#6b7280;font-size:0.78rem}
+.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.count-badge{background:#1f2937;padding:4px 12px;border-radius:20px;font-size:0.8rem;color:#9ca3af}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2 style="color:#e0e0e0">Unknown Face Alerts</h2>
+  <span class="count-badge">{{alerts|length}} alerts</span>
+</div>
+{% if alerts %}
+<div class="alerts-grid">
+{% for a in alerts %}
+<div class="alert-card">
+  <img src="/{{a.snapshot}}" onerror="this.style.background='#1f2937'">
+  <div class="alert-card-body">
+    <span class="badge {% if a.email_sent %}sent{% endif %}">{% if a.email_sent %}Email Sent{% else %}No Email{% endif %}</span>
+    <div class="time">{{a.detected_at[:19].replace("T"," ")}}</div>
+    {% if a.location %}<div style="color:#9ca3af;font-size:0.75rem;margin-top:4px">&#x1F4CD; {{a.location}}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div style="text-align:center;padding:60px;color:#6b7280">No alerts recorded yet.</div>
+{% endif %}
+{% endblock %}

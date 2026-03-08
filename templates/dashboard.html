@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Live Dashboard{% endblock %}
+{% block extra_head %}
+<style>
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#111827;border-radius:12px;padding:20px;border:1px solid #1f2937;text-align:center}
+.stat-card .val{font-size:2rem;font-weight:700;color:#00d084}
+.stat-card .lbl{color:#6b7280;font-size:0.8rem;margin-top:4px}
+.feed-section{display:grid;grid-template-columns:2fr 1fr;gap:20px}
+.card{background:#111827;border-radius:12px;border:1px solid #1f2937;overflow:hidden}
+.card-header{padding:14px 20px;border-bottom:1px solid #1f2937;display:flex;align-items:center;justify-content:space-between}
+.card-header h3{font-size:0.95rem;color:#e0e0e0}
+.camera-feed{width:100%;aspect-ratio:4/3;object-fit:cover;background:#000;display:block}
+.camera-placeholder{width:100%;aspect-ratio:4/3;background:#0d0d0d;display:flex;align-items:center;justify-content:center;color:#374151;font-size:0.85rem}
+.btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-size:0.85rem;font-weight:600;transition:all 0.2s}
+.btn-green{background:#00d084;color:#000}.btn-green:hover{background:#00b871}
+.btn-red{background:#ef4444;color:#fff}.btn-red:hover{background:#dc2626}
+.alert-item{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #1f2937}
+.alert-item:last-child{border-bottom:none}
+.alert-thumb{width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid #374151}
+.alert-info .time{font-size:0.75rem;color:#6b7280}
+.alert-info .label{font-size:0.85rem;color:#e74c3c;font-weight:600}
+.cam-controls{display:flex;gap:8px}
+@media(max-width:900px){.feed-section{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="stats-grid">
+  <div class="stat-card"><div class="val" id="stat-persons">{{total_persons}}</div><div class="lbl">Registered</div></div>
+  <div class="stat-card"><div class="val" id="stat-alerts">{{total_alerts}}</div><div class="lbl">Total Alerts</div></div>
+  <div class="stat-card"><div class="val" style="color:#3b82f6">&#x1F534;</div><div class="lbl">Live Feed</div></div>
+</div>
+<div class="feed-section">
+  <div class="card">
+    <div class="card-header">
+      <h3>&#x1F4F9; Live Camera</h3>
+      <div class="cam-controls">
+        <form method="POST" action="/camera/start" style="margin:0"><button class="btn btn-green" type="submit">Start</button></form>
+        <form method="POST" action="/camera/stop" style="margin:0"><button class="btn btn-red" type="submit">Stop</button></form>
+      </div>
+    </div>
+    <img src="/video_feed" class="camera-feed" id="feed" onerror="this.style.display='none';document.getElementById('placeholder').style.display='flex'">
+    <div class="camera-placeholder" id="placeholder" style="display:none">Camera not active</div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>&#x26A0;&#xFE0F; Recent Alerts</h3><a href="/alerts" style="color:#00d084;font-size:0.8rem;text-decoration:none">View all</a></div>
+    {% for a in alerts %}
+    <div class="alert-item">
+      <img src="/{{a.snapshot}}" class="alert-thumb" onerror="this.src=''">
+      <div class="alert-info">
+        <div class="label">Unknown Person</div>
+        <div class="time">{{a.detected_at[:19].replace("T"," ")}}</div>
+      </div>
+    </div>
+    {% else %}<div style="padding:20px;color:#6b7280;font-size:0.85rem;text-align:center">No alerts yet</div>{% endfor %}
+  </div>
+</div>
+<script>
+setInterval(()=>{fetch("/api/stats").then(r=>r.json()).then(d=>{
+  document.getElementById("stat-persons").textContent=d.total_persons;
+  document.getElementById("stat-alerts").textContent=d.total_alerts;
+})},5000);
+</script>
+{% endblock %}
